@@ -1,6 +1,6 @@
 # wormhole
 
-Multiple AI assistants fold sessions into shared markdown for collaboration.
+Cross agent cli sharing session
 
 ---
 
