@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
 CLAUDE_SETTINGS = Path.home() / ".claude" / "settings.json"
-HOOK_COMMAND = "/home/rlins/.local/bin/wh fold --auto"
+# Resolve `wh` at import time so each host writes its own absolute path into
+# Claude/Gemini settings and the OpenCode plugin file. Falling back to bare
+# "wh" lets PATH-driven setups still work, but hooks often run with a stripped
+# PATH so an absolute path is preferable when available.
+HOOK_COMMAND = f"{shutil.which('wh') or 'wh'} fold --auto"
 
 # Each CLI names its "agent loop completed" event differently.
 # Claude Code uses "Stop"; Gemini CLI uses "AfterAgent". Wiring both into the
