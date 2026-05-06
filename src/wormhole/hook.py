@@ -129,6 +129,97 @@ def gemini_installed(cwd: Path) -> bool:
     return _is_installed(gemini_settings_path(cwd), GEMINI_EVENT)
 
 
+# Kiro hooks live in agent config files (~/.kiro/agents/<name>.json).
+# We inject into the global default agent config so the hook fires in any session.
+KIRO_AGENT_DIR = Path.home() / ".kiro" / "agents"
+KIRO_AGENT_FILE = KIRO_AGENT_DIR / "kiro_default.json"
+
+# Kiro has no filename convention (no KIRO.md auto-load), so we inject the
+# AGENT.md directive via an agentSpawn hook — fires once when the kiro agent
+# starts, mirroring how CLAUDE.md / GEMINI.md auto-load at session start.
+# We avoid userPromptSubmit because kiro echoes that hook's stdout to the
+# terminal every turn, which is noisy.
+KIRO_SPAWN_COMMAND = "cat AGENT.md 2>/dev/null || true"
+
+# Kiro agents start with zero tools unless the config declares them. Without
+# `tools`, the model fabricates `<tool_call>` XML in plain text and invents
+# the response. We register `read` (the alias for fs_read) so the agent can
+# actually load .wormhole.md, and trust it via `allowedTools` so reads run
+# without per-call confirmation. Tool aliases come from kiro's example config
+# (~/.kiro/agents/agent_config.json.example).
+KIRO_TOOLS = ["read"]
+KIRO_ALLOWED_TOOLS = ["read"]
+
+
+def _kiro_hook_set(hooks: dict, event: str, command: str) -> bool:
+    entries = hooks.setdefault(event, [])
+    if any(h.get("command") == command for h in entries):
+        return False
+    entries.append({"command": command})
+    return True
+
+
+def _kiro_hook_unset(hooks: dict, event: str, command: str) -> bool:
+    entries = hooks.get(event, [])
+    kept = [h for h in entries if h.get("command") != command]
+    if len(kept) == len(entries):
+        return False
+    if kept:
+        hooks[event] = kept
+    else:
+        hooks.pop(event, None)
+    return True
+
+
+def install_kiro(cwd: Path) -> bool:
+    data = _load(KIRO_AGENT_FILE)
+    hooks = data.setdefault("hooks", {})
+    changed = _kiro_hook_set(hooks, "stop", HOOK_COMMAND)
+    changed |= _kiro_hook_set(hooks, "agentSpawn", KIRO_SPAWN_COMMAND)
+    # Older versions wrote a userPromptSubmit hook with the same command;
+    # remove it on re-install so users don't keep seeing per-turn output.
+    changed |= _kiro_hook_unset(hooks, "userPromptSubmit", KIRO_SPAWN_COMMAND)
+    tools = data.setdefault("tools", [])
+    for t in KIRO_TOOLS:
+        if t not in tools:
+            tools.append(t)
+            changed = True
+    allowed = data.setdefault("allowedTools", [])
+    for t in KIRO_ALLOWED_TOOLS:
+        if t not in allowed:
+            allowed.append(t)
+            changed = True
+    if not changed:
+        return False
+    _save(KIRO_AGENT_FILE, data)
+    return True
+
+
+def remove_kiro(cwd: Path) -> bool:
+    data = _load(KIRO_AGENT_FILE)
+    hooks = data.get("hooks")
+    if not isinstance(hooks, dict):
+        return False
+    changed = _kiro_hook_unset(hooks, "stop", HOOK_COMMAND)
+    changed |= _kiro_hook_unset(hooks, "agentSpawn", KIRO_SPAWN_COMMAND)
+    changed |= _kiro_hook_unset(hooks, "userPromptSubmit", KIRO_SPAWN_COMMAND)
+    if not changed:
+        return False
+    if not hooks:
+        data.pop("hooks", None)
+    _save(KIRO_AGENT_FILE, data)
+    return True
+
+
+def kiro_installed(cwd: Path) -> bool:
+    hooks = _load(KIRO_AGENT_FILE).get("hooks", {})
+    stop_ok = any(h.get("command") == HOOK_COMMAND for h in hooks.get("stop", []))
+    spawn_ok = any(
+        h.get("command") == KIRO_SPAWN_COMMAND for h in hooks.get("agentSpawn", [])
+    )
+    return stop_ok and spawn_ok
+
+
 def install_opencode(cwd: Path) -> bool:
     plugin_path = cwd / OPENCODE_PLUGIN_PATH
     plugin_path.parent.mkdir(parents=True, exist_ok=True)

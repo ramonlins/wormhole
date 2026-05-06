@@ -27,6 +27,8 @@ def _install_hook_for(source: str, cwd: Path) -> bool:
         return hook.install_claude()
     if source == "gemini":
         return hook.install_gemini(cwd)
+    if source == "kiro":
+        return hook.install_kiro(cwd)
     if source == "opencode":
         return hook.install_opencode(cwd)
     return False
@@ -37,6 +39,8 @@ def _remove_hook_for(source: str, cwd: Path) -> bool:
         return hook.remove_claude()
     if source == "gemini":
         return hook.remove_gemini(cwd)
+    if source == "kiro":
+        return hook.remove_kiro(cwd)
     if source == "opencode":
         return hook.remove_opencode(cwd)
     return False
@@ -218,7 +222,7 @@ def status() -> None:
 
 
 def _maybe_uninstall_hook(source: str, cwd: Path) -> str:
-    if source not in {"claude", "gemini", "opencode"}:
+    if source not in {"claude", "gemini", "kiro", "opencode"}:
         return ""
     if any_pane_streams(source):
         return ""
