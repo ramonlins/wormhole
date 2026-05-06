@@ -1,0 +1,25 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "wormhole"
+version = "0.1.0"
+description = "Sidecar that folds an AI CLI agent's session into another's context"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "Wukong" }]
+dependencies = [
+    "click>=8.1",
+]
+
+[project.scripts]
+wh = "wormhole.cli:cli"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/wormhole"]

@@ -9,6 +9,19 @@ agents in the same pane can read each other's context. Multiple CLIs
 (Claude, Gemini, OpenCode, ...) publish into the same `wormhole.md`,
 tagged by source.
 
+## Channel
+
+```
+! wh fold     — open the shared channel
+! wh unfold   — close it
+```
+
+Any agent in the pane can open or close the channel. While open, every
+assistant turn auto-publishes into the same `.wormhole.md`; other agents
+read it before responding (per `AGENT.md`). The first `wh fold` from a CLI
+also installs that CLI's hook so subsequent turns flow through without
+manual invocation.
+
 ## Install
 
 ```bash

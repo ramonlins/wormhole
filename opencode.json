@@ -1,0 +1,10 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "instructions": [
+    "AGENT.md",
+    ".wormhole.md"
+  ],
+  "plugin": [
+    "./.wormhole/opencode.ts"
+  ]
+}
