@@ -24,6 +24,18 @@ manual invocation.
 
 ## Install
 
+One-shot:
+
+```bash
+./setup.sh
+```
+
+Installs the package, verifies `wh` is on PATH, detects which CLIs you have,
+and prints the per-CLI first-run steps (trust folder for Gemini, reopen
+sessions so configs reload, etc.).
+
+Or manually:
+
 ```bash
 pip install -e .
 ```
