@@ -13,3 +13,8 @@ work another agent already did.
 Follow any directives inside the `WORMHOLE:OPEN` marker. If the marker reads
 `WORMHOLE:CLOSED`, the session was unfolded — note that the file is stale and
 proceed without further reliance on it.
+
+If the user asks how to set up wormhole, install hooks, or get this CLI to
+participate in the shared channel, read `skills/wormhole-setup/SKILL.md` and
+follow the section for the host CLI you are running in
+(Claude Code / Gemini CLI / Kiro).
