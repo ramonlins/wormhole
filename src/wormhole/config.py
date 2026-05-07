@@ -14,7 +14,22 @@ def _xdg_config_home() -> Path:
 
 
 CONFIG_PATH = _xdg_config_home() / "wormhole" / "config.toml"
-VAULT_DIR = Path(os.environ.get("WORMHOLE_VAULT") or Path.home() / "vault" / "wormhole")
+
+
+def _resolve_vault_dir() -> Path:
+    env = os.environ.get("WORMHOLE_VAULT")
+    if env:
+        return Path(env)
+    if CONFIG_PATH.exists():
+        with CONFIG_PATH.open("rb") as f:
+            raw = tomllib.load(f)
+        vault = raw.get("vault")
+        if vault:
+            return Path(vault)
+    return Path.home() / "vault" / "wormhole"
+
+
+VAULT_DIR = _resolve_vault_dir()
 
 
 @dataclass

@@ -91,7 +91,7 @@ Steps:
 
 ## Kiro
 
-Kiro is the most fragile of the three. Three things bit us in order:
+Kiro is the most fragile of the three. Things that bit us, in order:
 
 - **Hook events:** `stop` (lowercase — not `Stop`) for fold, plus `agentSpawn`
   for AGENT.md injection. We tried `userPromptSubmit` first; it works but
@@ -101,6 +101,12 @@ Kiro is the most fragile of the three. Three things bit us in order:
 - **Settings file:** `~/.kiro/agents/kiro_default.json`. This is an *agent
   config*, not a settings.json — schema differs from Claude/Gemini. Hooks go
   under `hooks.<event>` as a list of `{"command": "..."}` objects.
+- **`name` + `description` are required.** Kiro's loader rejects an agent
+  config that lacks `name` with `invalid agent config: kiro_default.json`,
+  and the agent silently won't load. The installer seeds `name` (from the
+  filename stem) and a default `description` on first creation; if you see
+  the rejection on a pre-existing file, add those two keys by hand. Schema
+  reference: `~/.kiro/agents/agent_config.json.example`.
 - **No `KIRO.md` auto-load.** Claude auto-loads `CLAUDE.md`, Gemini
   auto-loads `GEMINI.md`; Kiro has no equivalent convention. Without the
   `agentSpawn` `cat AGENT.md` hook, the agent never sees the directive to
@@ -116,6 +122,14 @@ Kiro is the most fragile of the three. Three things bit us in order:
   names won't match. Source: `~/.kiro/agents/agent_config.json.example`.
 - `wh fold` writes `tools: ["read"]` and `allowedTools: ["read"]` so the
   agent can load `.wormhole.md` without per-call confirmation.
+- **Empty-session "no turns found".** Kiro touches a fresh
+  `~/.kiro/sessions/cli/<uuid>.jsonl` the moment a session opens, and shell
+  escapes (`!wh fold`) are not logged as `Prompt` events. A naive
+  "latest by mtime" pick lands on that empty file and errors with
+  `no turns found in kiro session <uuid>`. The adapter now skips files with
+  no `Prompt`/`AssistantMessage` events and falls back to the most recent
+  file that has them — so the prior completed session gets folded instead of
+  the empty current one.
 
 Steps:
 
@@ -150,6 +164,17 @@ Steps:
 - **Kiro replies with hallucinated `<tool_call>` XML and an ENOENT-style
   error.** Tools were not registered. Re-run `! wh fold` from inside Kiro to
   rewrite `tools`/`allowedTools`, then restart Kiro.
+- **`invalid agent config: kiro_default.json`.** The agent config is missing
+  `name` (and/or `description`). On a fresh install the wormhole installer
+  seeds both; on a pre-existing file you hand-edit them in. The `name`
+  conventionally matches the filename stem (`kiro_default`).
+- **`no turns found in kiro session <uuid>` from `wh fold` / `wh fold kiro`.**
+  Kiro created the JSONL for the current session but hasn't logged any
+  `Prompt` events yet (often because the only "prompt" so far was a `!wh fold`
+  shell escape, which Kiro doesn't log). The current adapter skips empty
+  candidates; if you still see this, every JSONL under
+  `~/.kiro/sessions/cli/` is empty — have a normal turn with Kiro first,
+  then fold.
 - **Gemini hook silently does nothing.** The workspace is not trusted, or the
   hook was written to user-level settings. The hook MUST live in
   `<cwd>/.gemini/settings.json`, and the trust prompt must have been approved

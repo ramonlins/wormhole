@@ -173,8 +173,17 @@ def _kiro_hook_unset(hooks: dict, event: str, command: str) -> bool:
 
 def install_kiro(cwd: Path) -> bool:
     data = _load(KIRO_AGENT_FILE)
+    # Kiro's loader rejects agent configs missing `name` (and treats it as the
+    # agent identity). Seed it on first creation; never overwrite a user value.
+    changed = False
+    if not data.get("name"):
+        data["name"] = KIRO_AGENT_FILE.stem
+        changed = True
+    if "description" not in data:
+        data["description"] = "Default kiro agent — wormhole-managed hooks."
+        changed = True
     hooks = data.setdefault("hooks", {})
-    changed = _kiro_hook_set(hooks, "stop", HOOK_COMMAND)
+    changed |= _kiro_hook_set(hooks, "stop", HOOK_COMMAND)
     changed |= _kiro_hook_set(hooks, "agentSpawn", KIRO_SPAWN_COMMAND)
     # Older versions wrote a userPromptSubmit hook with the same command;
     # remove it on re-install so users don't keep seeing per-turn output.

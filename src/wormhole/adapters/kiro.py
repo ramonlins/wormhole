@@ -25,8 +25,18 @@ class KiroAdapter(Adapter):
         )
         if not candidates:
             raise AdapterError(f"no Kiro session jsonl in {KIRO_SESSIONS}")
-        latest = candidates[0]
-        return SessionRef(id=latest.stem, cli=self.name, path=latest)
+        # Kiro touches a fresh .jsonl as soon as a session opens, before any
+        # Prompt/AssistantMessage is logged (and shell escapes like `!wh fold`
+        # never get logged at all). Pick the most recent file that actually
+        # carries turn events; otherwise the new empty session always wins by
+        # mtime and we error out with "no turns found".
+        for path in candidates:
+            if _has_turn_events(path):
+                return SessionRef(id=path.stem, cli=self.name, path=path)
+        raise AdapterError(
+            f"no Kiro session with turns in {KIRO_SESSIONS} "
+            f"(checked {len(candidates)} file(s))"
+        )
 
     def read_turns(self, session: SessionRef, opts: FoldOptions) -> list[Turn]:
         if session.path is None:
@@ -44,6 +54,24 @@ class KiroAdapter(Adapter):
                 if text or tool_calls:
                     turns.append(Turn(role="assistant", text=text, tool_calls=tool_calls))
         return turns
+
+
+def _has_turn_events(path: Path) -> bool:
+    try:
+        with path.open() as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if obj.get("kind") in ("Prompt", "AssistantMessage"):
+                    return True
+    except OSError:
+        return False
+    return False
 
 
 def _load_jsonl(path: Path) -> list[dict]:
