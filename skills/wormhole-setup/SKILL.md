@@ -16,11 +16,12 @@ participant. Pick the section matching the CLI you are running in.
 
 ## Hook reference (the parts that bit us)
 
-| CLI    | Hook event(s)              | Settings file                          | Scope     | Tool config required |
-|--------|----------------------------|----------------------------------------|-----------|----------------------|
-| Claude | `Stop`                     | `~/.claude/settings.json`              | user      | no                   |
-| Gemini | `AfterAgent`               | `<cwd>/.gemini/settings.json`          | workspace | no                   |
-| Kiro   | `stop` + `agentSpawn`      | `~/.kiro/agents/kiro_default.json`     | user      | yes (`tools`)        |
+| CLI     | Hook event(s)              | Settings file                          | Scope     | Tool config required |
+|---------|----------------------------|----------------------------------------|-----------|----------------------|
+| Claude  | `Stop`                     | `~/.claude/settings.json`              | user      | no                   |
+| Concord | in-process (post-judge)    | n/a — code-driven                      | n/a       | n/a                  |
+| Gemini  | `AfterAgent`               | `<cwd>/.gemini/settings.json`          | workspace | no                   |
+| Kiro    | `stop` + `agentSpawn`      | `~/.kiro/agents/kiro_default.json`     | user      | yes (`tools`)        |
 
 Wrong event name = silent no-op. Wrong settings file = silent no-op. Both
 mistakes look identical to "the hook doesn't work", so always verify the
@@ -88,6 +89,57 @@ Steps:
 5. On the next assistant turn, `cat .wormhole.md` should show a fresh
    `[gemini ...]` block. If not, the workspace is not trusted yet — repeat
    2–3.
+
+## Concord
+
+Concord (binary: `accord`) is structurally different from the other CLIs.
+It doesn't write a session log on disk for wormhole to read; instead, the
+Rust binary calls into wormhole directly after each `/accord` judge
+synthesis, writing one jsonl record + triggering an `--auto` fold. So
+"installing the hook" is just "running a recent enough concord build" —
+no settings file to edit.
+
+- **Trigger:** in-process. After every successful judge synthesis,
+  concord appends to `~/vault/wormhole/panes/<pane_key>/concord-sessions/
+  <run_id>.jsonl` and shells out `wh fold concord --auto`.
+- **Pane key:** sha1[:8] of the git project root, computed identically
+  on both sides (Rust + Python). Both halves agree on the file path
+  without coordination.
+- **Block content:** only the judge's prose verdict. The full debate
+  metadata (agree / conflict / unique) stays in the jsonl for forensics
+  but doesn't pollute `wormhole.md` for downstream consumers.
+- **Workers stay private.** Concord fans out to 3-5 workers per turn;
+  none of them publish. Only the synthesis lands in the channel — that's
+  the whole point of running concord in front of the wormhole.
+- **No external hook to install or remove.** `! wh fold concord` marks
+  the pane as streaming concord; `! wh unfold` unmarks. Future syntheses
+  silent-no-op when the pane isn't streaming.
+- **Session id is fixed (`"concord"`).** Every fold replaces the prior
+  block in `wormhole.md` instead of stacking. The per-run filename on
+  disk is only for forensics.
+
+Steps:
+
+1. Open accord in the project directory.
+2. Run `! wh fold` from accord's prompt input. This opens the channel
+   with a `[concord session=concord ...]` placeholder block — channel
+   is now live; first synthesis replaces the placeholder.
+3. Run `/accord <prompt>`. The judge's verdict lands in `wormhole.md`,
+   replacing the placeholder. Other CLIs in the same pane (claude, kiro,
+   etc.) reading `.wormhole.md` will see it as context.
+4. Continue chatting. Each `/accord` turn updates the same block.
+5. `! wh unfold` when done. Closes the channel; concord stops folding.
+
+Common-issue specific to concord:
+
+- **`! wh fold` errors with "no concord sessions dir".** You're on a
+  build older than concord v0.1.0-beta.1 + wormhole v0.3.0-beta.1.
+  The placeholder behavior was added there. Update both.
+- **Block text is JSON instead of prose.** Same — wormhole v0.3.0-beta.1
+  added the JSON-envelope unwrap.
+- **Empty `concord-sessions/` folders appear in unrelated panes.** Older
+  adapter pre-created the dir. Fixed in v0.3.0-beta.1; clean up the
+  empty dirs and they won't return.
 
 ## Kiro
 

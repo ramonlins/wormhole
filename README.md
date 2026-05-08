@@ -6,8 +6,15 @@ Cross agent cli sharing session
 
 Sidecar that folds AI CLI sessions into a shared markdown file so other AI
 agents in the same pane can read each other's context. Multiple CLIs
-(Claude, Gemini, OpenCode, ...) publish into the same `wormhole.md`,
-tagged by source.
+(Claude, Gemini, OpenCode, Kiro, Concord) publish into the same
+`wormhole.md`, tagged by source.
+
+> **Concord** is a special source: it doesn't have its own session log.
+> Concord's TUI calls into wormhole directly after each `/accord` judge
+> synthesis. Use it as a planning layer in front of the other CLIs —
+> `accord → ! wh fold → /accord <plan> → claude/kiro implements from the
+> shared context`. See [the SKILL guide](skills/wormhole-setup/SKILL.md)
+> for per-CLI setup details.
 
 ## Channel
 
@@ -147,7 +154,9 @@ wormhole/
 │   └── adapters/
 │       ├── base.py        # ABC: find_session, read_turns
 │       ├── claude.py
+│       ├── concord.py     # reads concord-sessions/*.jsonl written by accord
 │       ├── gemini.py
+│       ├── kiro.py
 │       └── opencode.py
 └── tests/
 ```
