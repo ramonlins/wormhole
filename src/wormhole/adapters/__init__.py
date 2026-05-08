@@ -4,12 +4,14 @@ import os
 
 from .base import Adapter, AdapterError, FoldOptions, Turn
 from .claude import ClaudeAdapter
+from .concord import ConcordAdapter
 from .gemini import GeminiAdapter
 from .kiro import KiroAdapter
 from .opencode import OpenCodeAdapter
 
 ADAPTERS: dict[str, type[Adapter]] = {
     "claude": ClaudeAdapter,
+    "concord": ConcordAdapter,
     "gemini": GeminiAdapter,
     "kiro": KiroAdapter,
     "opencode": OpenCodeAdapter,
