@@ -37,14 +37,15 @@ One-shot:
 ./setup.sh
 ```
 
-Installs the package, verifies `wh` is on PATH, detects which CLIs you have,
-and prints the per-CLI first-run steps (trust folder for Gemini, reopen
-sessions so configs reload, etc.).
+Installs the package via `pipx` (installing it first if needed), verifies
+`wh` is on PATH, detects which CLIs you have, and prints the per-CLI
+first-run steps (trust folder for Gemini, reopen sessions so configs
+reload, etc.).
 
-Or manually:
+Or manually (requires `pipx`):
 
 ```bash
-pip install -e .
+pipx install --editable .
 ```
 
 ## Model

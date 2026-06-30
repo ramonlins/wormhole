@@ -141,13 +141,17 @@ KIRO_AGENT_FILE = KIRO_AGENT_DIR / "kiro_default.json"
 # terminal every turn, which is noisy.
 KIRO_SPAWN_COMMAND = "cat AGENT.md 2>/dev/null || true"
 
-# Kiro agents start with zero tools unless the config declares them. Without
-# `tools`, the model fabricates `<tool_call>` XML in plain text and invents
-# the response. We register `read` (the alias for fs_read) so the agent can
-# actually load .wormhole.md, and trust it via `allowedTools` so reads run
-# without per-call confirmation. Tool aliases come from kiro's example config
+# Kiro agents start with zero tools unless the config declares them, and Kiro
+# treats a declared `tools` list as the agent's COMPLETE allow-list. Since we
+# must create kiro_default.json to install our hook, that creation would cap a
+# fresh agent at whatever we list here. Registering only `read` (the alias for
+# fs_read) was enough for wormhole itself, but it silently left freshly-set-up
+# agents read-only (no shell/write). So we seed the agent's normal working set;
+# `read` is still what wormhole needs to load .wormhole.md. We only trust `read`
+# via `allowedTools` so it runs without confirmation — shell/write stay enabled
+# but prompt per call. Tool aliases come from kiro's example config
 # (~/.kiro/agents/agent_config.json.example).
-KIRO_TOOLS = ["read"]
+KIRO_TOOLS = ["read", "write", "shell", "grep", "glob"]
 KIRO_ALLOWED_TOOLS = ["read"]
 
 
@@ -272,4 +276,6 @@ def opencode_installed(cwd: Path) -> bool:
     plugins = data.get("plugin")
     if not isinstance(plugins, list):
         return False
-    return f"./{OPENCODE_PLUGIN_PATH}" in plugins
+    registered = f"./{OPENCODE_PLUGIN_PATH}" in plugins
+    plugin_file = cwd / OPENCODE_PLUGIN_PATH
+    return registered and plugin_file.exists()
