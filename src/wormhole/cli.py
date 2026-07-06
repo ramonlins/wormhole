@@ -25,8 +25,12 @@ from . import store
 def _install_hook_for(source: str, cwd: Path) -> bool:
     if source == "claude":
         return hook.install_claude()
+    if source == "codex":
+        return hook.install_codex(cwd)
     if source == "gemini":
         return hook.install_gemini(cwd)
+    if source == "hermes":
+        return hook.install_hermes()
     if source == "kiro":
         return hook.install_kiro(cwd)
     if source == "opencode":
@@ -37,8 +41,12 @@ def _install_hook_for(source: str, cwd: Path) -> bool:
 def _remove_hook_for(source: str, cwd: Path) -> bool:
     if source == "claude":
         return hook.remove_claude()
+    if source == "codex":
+        return hook.remove_codex(cwd)
     if source == "gemini":
         return hook.remove_gemini(cwd)
+    if source == "hermes":
+        return hook.remove_hermes()
     if source == "kiro":
         return hook.remove_kiro(cwd)
     if source == "opencode":
@@ -127,6 +135,8 @@ def fold(source: str | None, include_thinking: bool | None, include_tools: bool 
             paths.mark_streaming(adapter.name)
             if _install_hook_for(adapter.name, paths.cwd):
                 hook_msg = " · hook installed"
+                if adapter.name == "codex":
+                    hook_msg += " (open /hooks, trust it, restart if needed)"
 
     store.append({
         "event": "fold",
@@ -222,7 +232,7 @@ def status() -> None:
 
 
 def _maybe_uninstall_hook(source: str, cwd: Path) -> str:
-    if source not in {"claude", "gemini", "kiro", "opencode"}:
+    if source not in {"claude", "codex", "gemini", "hermes", "kiro", "opencode"}:
         return ""
     if any_pane_streams(source):
         return ""

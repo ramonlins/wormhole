@@ -6,7 +6,7 @@ Cross agent cli sharing session
 
 Sidecar that folds AI CLI sessions into a shared markdown file so other AI
 agents in the same pane can read each other's context. Multiple CLIs
-(Claude, Gemini, OpenCode, Kiro, Concord) publish into the same
+(Claude, Codex, Gemini, OpenCode, Kiro, Hermes, Concord) publish into the same
 `wormhole.md`, tagged by source.
 
 > **Concord** is a special source: it doesn't have its own session log.
@@ -41,6 +41,13 @@ Installs the package, verifies `wh` is on PATH, detects which CLIs you have,
 and prints the per-CLI first-run steps (trust folder for Gemini, reopen
 sessions so configs reload, etc.).
 
+Codex installs as a project-local hook in the Codex project root's
+`.codex/hooks.json`. That hook can still publish into a parent sharing root
+selected by `.wormhole-root`. After the first `wh fold` from Codex, open
+`/hooks`, trust the wormhole `Stop` hook, and restart Codex if the session had
+already loaded hooks. Prompts sent before that trust/restart step will not
+auto-fold.
+
 Or manually:
 
 ```bash
@@ -49,8 +56,11 @@ pip install -e .
 
 ## Model
 
-**One wormhole per terminal pane.** A pane is identified by its
-controlling TTY. Sessions auto-bind — there is nothing to name.
+**One wormhole per project sharing root.** Sessions auto-bind — there is
+nothing to name. By default the sharing root is the nearest git toplevel.
+Add a `.wormhole-root` marker to a parent repo when child projects should all
+publish into one studio/global `.wormhole.md` despite having nested `.git`
+directories.
 
 `wh` is invoked from inside a CLI via its shell escape (e.g.
 `! wh fold claude`). Because CLIs often run `!` commands with pipes
@@ -58,8 +68,7 @@ attached, `wh` cannot rely on its own stdin being a TTY. It detects the
 pane TTY by walking the parent-process chain until it finds one attached
 to a pty.
 
-`pane_key = sha1(tty_path + tty_ctime)[:8]`
-(ctime guards against pty-number reuse after a pane closes.)
+`pane_key = sha1(project_sharing_root)[:8]`
 
 ## Commands
 
@@ -154,8 +163,10 @@ wormhole/
 │   └── adapters/
 │       ├── base.py        # ABC: find_session, read_turns
 │       ├── claude.py
+│       ├── codex.py       # reads ~/.codex/state_*.sqlite + rollout JSONL
 │       ├── concord.py     # reads concord-sessions/*.jsonl written by accord
 │       ├── gemini.py
+│       ├── hermes.py      # reads ~/.hermes/state.db sessions/messages
 │       ├── kiro.py
 │       └── opencode.py
 └── tests/

@@ -3,8 +3,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from wormhole.adapters.base import FoldOptions
 from wormhole.adapters.claude import ClaudeAdapter, _extract_user_text, _extract_assistant_parts
+from wormhole.adapters.codex import CodexAdapter
 from wormhole.adapters.gemini import GeminiAdapter
 from wormhole.pane import (
     flip_to_closed,
@@ -42,7 +45,22 @@ def test_project_root_walks_to_git(tmp_path: Path):
 def test_project_root_falls_back_to_cwd(tmp_path: Path):
     plain = tmp_path / "no-git"
     plain.mkdir()
+    if any((d / ".git").exists() for d in [plain.resolve(), *plain.resolve().parents]):
+        pytest.skip("tmp_path lives under an ambient git root")
     assert project_root(plain) == plain.resolve()
+
+
+def test_project_root_marker_overrides_nested_git(tmp_path: Path):
+    studio = tmp_path / "beyond-studio"
+    game = studio / "games" / "bsp1-hello-bind"
+    game.mkdir(parents=True)
+    (studio / ".git").mkdir()
+    (studio / ".wormhole-root").write_text("studio global wormhole\n")
+    (game / ".git").mkdir()
+    (game / "scripts").mkdir()
+
+    assert project_root(game) == studio.resolve()
+    assert project_root(game / "scripts") == studio.resolve()
 
 
 def test_pane_key_matches_for_subdirs_of_same_project(tmp_path: Path):
@@ -173,6 +191,37 @@ def test_gemini_hook_install_remove_idempotent(tmp_path: Path):
     assert "hooks" not in json.loads(settings.read_text())
 
 
+def test_codex_hook_install_remove_idempotent(tmp_path: Path):
+    repo = tmp_path / "repo"
+    sub = repo / "src"
+    sub.mkdir(parents=True)
+    (repo / ".git").mkdir()
+    hooks_file = repo / ".codex" / "hooks.json"
+    hooks_file.parent.mkdir()
+    hooks_file.write_text(json.dumps({"hooks": {"PreToolUse": [{"hooks": [{"type": "command", "command": "other"}]}]}}))
+    from wormhole import hook
+
+    assert hook.install_codex(sub) is True
+    assert hook.install_codex(sub) is False  # idempotent
+    assert hook.codex_installed(sub) is True
+
+    data = json.loads(hooks_file.read_text())
+    assert "PreToolUse" in data["hooks"]  # unrelated hooks preserved
+    stop_groups = data["hooks"][hook.CODEX_EVENT]
+    assert any(
+        h.get("command") == hook.HOOK_COMMAND
+        for group in stop_groups
+        for h in group.get("hooks", [])
+    )
+
+    assert hook.remove_codex(sub) is True
+    assert hook.remove_codex(sub) is False  # idempotent
+    assert hook.codex_installed(sub) is False
+    data = json.loads(hooks_file.read_text())
+    assert "PreToolUse" in data["hooks"]
+    assert hook.CODEX_EVENT not in data["hooks"]
+
+
 def test_opencode_hook_install_remove_idempotent(tmp_path: Path):
     settings = tmp_path / "opencode.json"
     settings.write_text(json.dumps({"instructions": ["A.md"]}))
@@ -259,6 +308,266 @@ def test_claude_adapter_returns_all_turns(tmp_path: Path):
     texts = [t.text for t in turns]
     assert roles == ["user", "assistant", "user", "assistant"]
     assert texts == ["first", "hello", "second", "world"]
+
+
+def test_codex_adapter_reads_rollout_turns(tmp_path: Path):
+    sf = tmp_path / "rollout.jsonl"
+    events = [
+        {
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": "# AGENTS.md instructions for /tmp\n\nx"},
+                    {"type": "input_text", "text": "<environment_context>\n"},
+                ],
+            },
+        },
+        {
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "<environment_context>\n  <cwd>/tmp</cwd>\n</environment_context>"}],
+            },
+        },
+        {
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "hello codex"}],
+            },
+        },
+        {
+            "type": "response_item",
+            "payload": {
+                "type": "reasoning",
+                "summary": [{"type": "summary_text", "text": "thinking"}],
+            },
+        },
+        {
+            "type": "response_item",
+            "payload": {
+                "type": "function_call",
+                "name": "exec_command",
+                "arguments": json.dumps({"cmd": "ls"}),
+            },
+        },
+        {
+            "type": "response_item",
+            "payload": {
+                "type": "function_call_output",
+                "call_id": "call_1",
+                "output": "ignored",
+            },
+        },
+        {
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "hi there"}],
+            },
+        },
+        {
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "<user_shell_command>\n<command>\nwh fold\n</command>\n</user_shell_command>"}],
+            },
+        },
+    ]
+    with sf.open("w") as f:
+        for e in events:
+            f.write(json.dumps(e) + "\n")
+
+    from wormhole.adapters.base import SessionRef
+
+    adapter = CodexAdapter()
+    ref = SessionRef(id="thread", cli="codex", path=sf)
+    turns = adapter.read_turns(ref, FoldOptions(include_thinking=True, include_tools=True))
+
+    assert [t.role for t in turns] == ["user", "assistant"]
+    assert turns[0].text == "hello codex"
+    assert turns[1].text == "hi there"
+    assert turns[1].thinking == "thinking"
+    assert turns[1].tool_calls == ['exec_command({"cmd": "ls"})']
+
+
+def test_codex_adapter_returns_placeholder_for_empty_manual_fold(tmp_path: Path):
+    sf = tmp_path / "rollout.jsonl"
+    events = [
+        {
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "<user_shell_command>\n<command>\nwh fold\n</command>\n</user_shell_command>"}],
+            },
+        },
+    ]
+    with sf.open("w") as f:
+        for e in events:
+            f.write(json.dumps(e) + "\n")
+
+    from wormhole.adapters.base import SessionRef
+
+    turns = CodexAdapter().read_turns(SessionRef(id="empty", cli="codex", path=sf), FoldOptions())
+
+    assert len(turns) == 1
+    assert turns[0].role == "assistant"
+    assert "awaiting first real turn" in turns[0].text
+
+
+def test_codex_adapter_finds_session_from_state_db(tmp_path: Path, monkeypatch):
+    import sqlite3
+    from wormhole.adapters import codex as c
+
+    rollout = tmp_path / "rollout.jsonl"
+    rollout.write_text("")
+    db = tmp_path / "state_5.sqlite"
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT, cwd TEXT, source TEXT, archived INTEGER, updated_at INTEGER)"
+    )
+    conn.execute(
+        "INSERT INTO threads VALUES (?, ?, ?, ?, ?, ?)",
+        ("older", str(rollout), str(tmp_path), "cli", 0, 1),
+    )
+    conn.execute(
+        "INSERT INTO threads VALUES (?, ?, ?, ?, ?, ?)",
+        ("current", str(rollout), "/elsewhere", "cli", 0, 2),
+    )
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setattr(c, "_state_db", lambda: db)
+    monkeypatch.setenv("CODEX_THREAD_ID", "current")
+
+    ref = CodexAdapter().find_session(tmp_path)
+    assert ref.id == "current"
+    assert ref.path == rollout
+
+
+def test_hermes_adapter_reads_from_sqlite(tmp_path: Path, monkeypatch):
+    import sqlite3
+    from wormhole.adapters import hermes as h
+    from wormhole.adapters.base import SessionRef
+
+    db = tmp_path / "state.db"
+    conn = sqlite3.connect(db)
+    conn.executescript(
+        """
+        CREATE TABLE sessions (
+            id TEXT PRIMARY KEY,
+            source TEXT NOT NULL,
+            started_at REAL NOT NULL
+        );
+        CREATE TABLE messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL,
+            role TEXT NOT NULL,
+            content TEXT,
+            tool_calls TEXT,
+            reasoning TEXT,
+            timestamp REAL NOT NULL
+        );
+        """
+    )
+    conn.execute("INSERT INTO sessions VALUES ('older', 'cli', 100.0)")
+    conn.execute("INSERT INTO sessions VALUES ('newer', 'cli', 200.0)")
+    conn.execute(
+        "INSERT INTO messages (session_id, role, content, tool_calls, reasoning, timestamp) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        ("newer", "user", "[Note: model was just switched from x to y]\n\nhi", None, None, 201.0),
+    )
+    conn.execute(
+        "INSERT INTO messages (session_id, role, content, tool_calls, reasoning, timestamp) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        ("newer", "assistant", "",
+         json.dumps([{"function": {"name": "read_file", "arguments": '{"path": "x"}'}}]),
+         "thinking out loud", 202.0),
+    )
+    conn.execute(
+        "INSERT INTO messages (session_id, role, content, tool_calls, reasoning, timestamp) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        ("newer", "tool", "tool result body", None, None, 203.0),
+    )
+    conn.execute(
+        "INSERT INTO messages (session_id, role, content, tool_calls, reasoning, timestamp) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        ("newer", "assistant", "final answer", None, None, 204.0),
+    )
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setattr(h, "_state_db", lambda: db)
+
+    adapter = h.HermesAdapter()
+    ref = adapter.find_session(tmp_path)
+    assert ref.id == "newer"
+
+    turns = adapter.read_turns(ref, FoldOptions(include_thinking=True, include_tools=True))
+    assert [t.role for t in turns] == ["user", "assistant", "assistant"]
+    assert turns[0].text == "hi"  # model-switch note stripped
+    assert turns[1].text == ""
+    assert turns[1].thinking == "thinking out loud"
+    assert turns[1].tool_calls == ['read_file({"path": "x"})']
+    assert turns[2].text == "final answer"
+
+
+def test_hermes_hook_install_remove_idempotent(tmp_path: Path, monkeypatch):
+    import yaml
+    from wormhole import hook
+
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(yaml.safe_dump({"model": "gpt-5", "max_tokens": 4096}, sort_keys=False))
+    allowlist = tmp_path / "shell-hooks-allowlist.json"
+    monkeypatch.setattr(hook, "hermes_config_path", lambda: cfg)
+    monkeypatch.setattr(hook, "hermes_allowlist_path", lambda: allowlist)
+
+    assert hook.install_hermes() is True
+    assert hook.install_hermes() is False  # idempotent
+    assert hook.hermes_installed() is True
+
+    data = yaml.safe_load(cfg.read_text())
+    assert data["model"] == "gpt-5"  # unrelated keys preserved
+    entries = data["hooks"][hook.HERMES_EVENT]
+    assert any(e.get("command") == hook.HOOK_COMMAND for e in entries)
+
+    allow = json.loads(allowlist.read_text())
+    assert any(
+        e["event"] == hook.HERMES_EVENT and e["command"] == hook.HOOK_COMMAND
+        for e in allow["approvals"]
+    )
+
+    assert hook.remove_hermes() is True
+    assert hook.remove_hermes() is False  # idempotent
+    assert hook.hermes_installed() is False
+    assert "hooks" not in yaml.safe_load(cfg.read_text())
+    assert "approvals" not in json.loads(allowlist.read_text())
+
+
+def test_hermes_hook_preserves_other_post_llm_call_entries(tmp_path: Path, monkeypatch):
+    import yaml
+    from wormhole import hook
+
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(yaml.safe_dump({
+        "hooks": {hook.HERMES_EVENT: [{"command": "other-thing"}]},
+    }, sort_keys=False))
+    allowlist = tmp_path / "shell-hooks-allowlist.json"
+    monkeypatch.setattr(hook, "hermes_config_path", lambda: cfg)
+    monkeypatch.setattr(hook, "hermes_allowlist_path", lambda: allowlist)
+
+    hook.install_hermes()
+    hook.remove_hermes()
+    entries = yaml.safe_load(cfg.read_text())["hooks"][hook.HERMES_EVENT]
+    assert any(e.get("command") == "other-thing" for e in entries)
+    assert not any(e.get("command") == hook.HOOK_COMMAND for e in entries)
 
 
 def test_gemini_adapter_returns_all_turns(tmp_path: Path):

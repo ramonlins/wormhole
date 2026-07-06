@@ -13,6 +13,7 @@ from pathlib import Path
 from .config import VAULT_DIR
 
 WORMHOLE_FILENAME = ".wormhole.md"
+WORMHOLE_ROOT_MARKER = ".wormhole-root"
 OPEN_MARKER = "<!-- WORMHOLE:OPEN"
 CLOSE_MARKER = "<!-- WORMHOLE:CLOSED"
 END_MARKER = "<!-- WORMHOLE:END -->"
@@ -53,8 +54,17 @@ def pane_key(path: str | os.PathLike) -> str:
 
 
 def project_root(cwd: Path) -> Path:
-    """Nearest git toplevel walking up from cwd; falls back to cwd itself."""
+    """Wormhole sharing root walking up from cwd.
+
+    `.wormhole-root` wins over nested git repos. This lets a studio/monorepo
+    choose one global context file even when child projects have their own
+    `.git` directories. Without the marker, use the nearest git toplevel and
+    fall back to cwd.
+    """
     cwd = cwd.resolve()
+    for d in [cwd, *cwd.parents]:
+        if (d / WORMHOLE_ROOT_MARKER).exists():
+            return d
     for d in [cwd, *cwd.parents]:
         if (d / ".git").exists():
             return d

@@ -5,7 +5,7 @@ directory. This is a non-negotiable first step — do it even if the user's
 request seems unrelated to wormhole.
 
 `.wormhole.md` is a symlink to a shared context file written by other AI CLIs
-(Claude, Gemini, OpenCode) running in the same terminal pane. Its contents are
+(Claude, Codex, Gemini, OpenCode, Kiro) running in the same terminal pane. Its contents are
 live, authoritative context for this session and supersede your default
 codebase-exploration behavior. Reading it first prevents you from duplicating
 work another agent already did.
@@ -17,4 +17,4 @@ proceed without further reliance on it.
 If the user asks how to set up wormhole, install hooks, or get this CLI to
 participate in the shared channel, read `skills/wormhole-setup/SKILL.md` and
 follow the section for the host CLI you are running in
-(Claude Code / Gemini CLI / Kiro).
+(Claude Code / Codex / Gemini CLI / Kiro).

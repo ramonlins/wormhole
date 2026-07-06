@@ -11,6 +11,11 @@ Wormhole shares per-pane context across AI CLIs by writing to
 Each CLI installs a hook so every assistant turn auto-folds its session into
 that file. Other CLIs in the same pane read the file before responding.
 
+Sharing root rule: by default wormhole uses the nearest git root. If a parent
+repo contains `.wormhole-root`, that marker wins over nested `.git` folders so
+all child projects publish into the parent repo's `.wormhole.md`. This is the
+Beyond Studio pattern: every game shares the studio-level register.
+
 This skill walks an agent through the steps required to make its host CLI a
 participant. Pick the section matching the CLI you are running in.
 
@@ -19,8 +24,10 @@ participant. Pick the section matching the CLI you are running in.
 | CLI     | Hook event(s)              | Settings file                          | Scope     | Tool config required |
 |---------|----------------------------|----------------------------------------|-----------|----------------------|
 | Claude  | `Stop`                     | `~/.claude/settings.json`              | user      | no                   |
+| Codex   | `Stop`                     | `<repo>/.codex/hooks.json`             | workspace | no (but trust gate)  |
 | Concord | in-process (post-judge)    | n/a — code-driven                      | n/a       | n/a                  |
 | Gemini  | `AfterAgent`               | `<cwd>/.gemini/settings.json`          | workspace | no                   |
+| Hermes  | `post_llm_call`            | `$HERMES_HOME/config.yaml`             | user      | no (but consent gate)|
 | Kiro    | `stop` + `agentSpawn`      | `~/.kiro/agents/kiro_default.json`     | user      | yes (`tools`)        |
 
 Wrong event name = silent no-op. Wrong settings file = silent no-op. Both
@@ -63,6 +70,44 @@ Steps:
 `! wh unfold` closes the channel; if no other pane is still streaming claude,
 it also removes the matcher from `settings.json`.
 
+## Codex
+
+- **Hook event:** `Stop` (fires when the turn finishes). Codex exposes many
+  lifecycle events (`PreToolUse`, `PostToolUse`, `UserPromptSubmit`, etc.),
+  but `Stop` is the right "assistant is done, fold now" signal.
+- **Settings file:** the Codex project root's `.codex/hooks.json`,
+  workspace-level. Wormhole writes project-local hooks instead of editing
+  `~/.codex/config.toml`; the hook can still publish into a parent sharing
+  root selected by `.wormhole-root`.
+- **Trust gate.** Codex requires non-managed command hooks to be reviewed and
+  trusted before they run. After the first install, open `/hooks`, trust the
+  wormhole `Stop` hook, then restart Codex if the hook list was already loaded
+  for the session.
+- **Session source.** The adapter reads `~/.codex/state_*.sqlite` to resolve
+  the current thread (preferring `$CODEX_THREAD_ID` when Codex provides it),
+  then folds the matching rollout JSONL from `~/.codex/sessions/...`.
+
+Steps:
+
+1. Open Codex in the project directory.
+2. Ask Codex to run `wh fold` (or run `wh fold codex` from a Codex shell/tool
+   call). This:
+   - Writes `.wormhole.md` at the sharing root, marks `codex` as streaming for
+     this pane, and adds a `Stop` command hook to the Codex project root's
+     `.codex/hooks.json`.
+   - Uses the absolute `wh` path when available, so the hook survives stripped
+     PATH environments.
+3. Open `/hooks` in Codex, review the new project hook, and trust it.
+4. Restart Codex if the current session had already loaded hooks before the
+   file was written. Testing more prompts in the same session immediately after
+   `wh fold` may still show a stale `.wormhole.md` because Codex has not
+   reloaded or trusted the new hook yet.
+5. Verify on the next turn: `cat .wormhole.md` should show a fresh
+   `[codex session=...]` block.
+
+`wh unfold codex` drops the last Codex block and removes the project-local
+`Stop` hook when no other pane is still streaming Codex.
+
 ## Gemini CLI
 
 - **Hook event:** `AfterAgent` (fires after each assistant turn). NOT `Stop`
@@ -89,6 +134,48 @@ Steps:
 5. On the next assistant turn, `cat .wormhole.md` should show a fresh
    `[gemini ...]` block. If not, the workspace is not trusted yet — repeat
    2–3.
+
+## Hermes
+
+- **Hook event:** `post_llm_call` (fires once per LLM response, guarded on
+  non-empty non-interrupted output). Hermes does not expose a `Stop`/`AfterAgent`
+  equivalent; `post_llm_call` is the closest "turn is done, fold now" signal.
+  Other hermes events (`pre_llm_call`, `on_session_end`, `subagent_stop`) either
+  fire too often or too rarely to be useful here.
+- **Settings file:** `$HERMES_HOME/config.yaml` (defaults to `~/.hermes/config.yaml`).
+  Hermes honors `$HERMES_HOME` for profiles — wormhole's installer reads the
+  same env var so `hermes --profile <name>` lands in the right config.
+- **Consent gate.** Hermes prompts the TTY the first time it sees an
+  unseen `(event, command)` pair, persisting approval to
+  `~/.hermes/shell-hooks-allowlist.json`. Shell escapes (`! wh fold`) have no
+  stdin to answer the prompt, so the installer pre-seeds the allowlist entry
+  for `wh fold --auto` at install time. `wh unfold` removes it.
+- **PyYAML required.** Wormhole soft-imports `yaml` only for hermes; if it's
+  missing the installer raises a clear error pointing at `pip install pyyaml`.
+  Most distros ship it already.
+- **Single-session-per-host caveat.** Hermes stores sessions in SQLite without
+  a `cwd` column, so the adapter picks the most recent CLI session globally —
+  same heuristic Kiro uses. If you run two hermes panes in different projects
+  on the same host, the newer pane's session may fold into the older pane's
+  `wormhole.md`. Run one hermes pane per project, or pass `--auto` from a
+  pre-pinned session id.
+
+Steps:
+
+1. Open hermes in the project directory.
+2. Run `! wh fold` inside hermes. This:
+   - Adds `hooks.post_llm_call: [{command: "<wh-path> fold --auto", timeout: 30}]`
+     to `$HERMES_HOME/config.yaml`.
+   - Pre-seeds the consent allowlist so the first hook firing isn't blocked.
+3. Exit and reopen hermes so it re-registers shell hooks from the new config.
+   (`register_from_config` runs at CLI startup — config edits made mid-session
+   are not hot-reloaded.)
+4. Verify: have a real turn (say "hi"), then `cat .wormhole.md` should show a
+   `[hermes session=...]` block. If not, check
+   `hermes hooks list` — the entry must appear there as approved.
+
+`! wh unfold` closes the channel, removes the `post_llm_call` entry from
+`config.yaml`, and drops the allowlist approval.
 
 ## Concord
 
@@ -210,7 +297,11 @@ Steps:
 
 - **Hook installed but never fires.** The CLI needs a restart so the new
   settings/agent config reload. Gemini and Kiro almost always need this on
-  first install.
+  first install. Codex also needs `/hooks` trust before a non-managed command
+  hook can run.
+- **Codex says hooks need review or skips the wormhole hook.** Open `/hooks`,
+  trust the project-local `Stop` hook from `<repo>/.codex/hooks.json`, then
+  restart Codex if the hook still does not appear to fire.
 - **`.wormhole.md` shows `WORMHOLE:CLOSED`.** Someone ran `wh unfold`. Run
   `wh fold` again to reopen and reinstall the hook for the current CLI.
 - **Kiro replies with hallucinated `<tool_call>` XML and an ENOENT-style
@@ -234,3 +325,12 @@ Steps:
 - **`wh: command not found` inside a hook.** Hooks often run with a stripped
   PATH. `wh fold` writes the absolute path of `wh` resolved at install time;
   if you moved the binary, reinstall (`pip install -e .` then `! wh fold`).
+- **Hermes hook installs but never fires.** The shell-hook registry is built
+  at hermes startup; mid-session edits don't reload. Quit and reopen hermes
+  after the install. Then `hermes hooks list` must show the entry as
+  approved — if it's pending, the allowlist seed didn't land (check that
+  `~/.hermes/shell-hooks-allowlist.json` has the matching `event`/`command`
+  pair).
+- **Hermes adapter raises "needs PyYAML".** The hermes adapter soft-depends
+  on PyYAML to edit `config.yaml`. `pip install pyyaml` and retry — wormhole
+  itself stays YAML-free for users who don't run hermes.
