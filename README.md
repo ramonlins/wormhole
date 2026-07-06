@@ -37,9 +37,10 @@ One-shot:
 ./setup.sh
 ```
 
-Installs the package, verifies `wh` is on PATH, detects which CLIs you have,
-and prints the per-CLI first-run steps (trust folder for Gemini, reopen
-sessions so configs reload, etc.).
+Installs the package via `pipx` (installing it first if needed), verifies
+`wh` is on PATH, detects which CLIs you have, and prints the per-CLI
+first-run steps (trust folder for Gemini, reopen sessions so configs
+reload, etc.).
 
 Codex installs as a project-local hook in the Codex project root's
 `.codex/hooks.json`. That hook can still publish into a parent sharing root

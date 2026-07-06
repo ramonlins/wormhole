@@ -4,7 +4,15 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 echo "==> Installing wormhole package..."
-pip install -e . >/dev/null
+if command -v pipx >/dev/null; then
+  pipx install --editable . >/dev/null
+elif pip install -e . >/dev/null 2>&1; then
+  : # succeeded (older pip or venv)
+else
+  echo "    pip install failed (externally-managed env). Trying: sudo apt install -y pipx"
+  sudo apt install -y pipx >/dev/null
+  pipx install --editable . >/dev/null
+fi
 
 if ! command -v wh >/dev/null; then
   echo "ERROR: 'wh' not found on PATH after install."
